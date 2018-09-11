@@ -57,6 +57,7 @@ public class OccamBus {
      */
     public void unregister(Object subscriber) {
         List<String> labels = REGISTERS.remove(subscriber.getClass());
+        METHOD_CACHE.remove(subscriber.getClass());
         if (null != labels) {
             for (String label : labels) {
                 //根据标签查找记录

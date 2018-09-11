@@ -23,8 +23,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Subscribe({"xxx", "呵呵"})
-    private void test(Student student) {
+    private void test1(Student student) {
         Toast.makeText(this, student.name + student.nickName, Toast.LENGTH_SHORT).show();
+    }
+    @Subscribe({"xxx", "呵呵"})
+    private void test2() {
+        Toast.makeText(this,"和", Toast.LENGTH_SHORT).show();
     }
 
     @Override
