@@ -16,8 +16,13 @@ OccamBus.getInstance().post("xxx", student);
 
 # 接收
 ```java
-    @Subscribe({"xxx"})
-    private void test1(Student student) {
-        Toast.makeText(this, student.name + student.nickName, Toast.LENGTH_SHORT).show();
-    }
+@Subscribe({"xxx"})
+private void test1(Student student) {
+    Toast.makeText(this, student.name + student.nickName, Toast.LENGTH_SHORT).show();
+}
+```
+
+# 反注册
+```java
+OccamBus.getInstance().unregister(this);
 ```
