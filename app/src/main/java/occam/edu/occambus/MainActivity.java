@@ -16,13 +16,12 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         OccamBus.getInstance().register(this);
         Student student = new Student();
-        student.name = "你好";
-        student.nickName = "加速度";
-
+        student.name = "小明";
+        student.nickName = "赵日天";
         OccamBus.getInstance().post("xxx", student);
     }
 
-    @Subscribe({"xxx", "呵呵"})
+    @Subscribe({"xxx"})
     private void test1(Student student) {
         Toast.makeText(this, student.name + student.nickName, Toast.LENGTH_SHORT).show();
     }
