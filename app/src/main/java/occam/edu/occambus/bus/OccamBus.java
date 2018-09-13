@@ -1,5 +1,8 @@
 package occam.edu.occambus.bus;
 
+import android.os.Looper;
+import android.support.test.espresso.core.internal.deps.guava.util.concurrent.ThreadFactoryBuilder;
+
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -7,6 +10,15 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import occam.edu.occambus.bus.thread.AsyncPoster;
+import occam.edu.occambus.bus.thread.BackgroundPoster;
+import occam.edu.occambus.bus.thread.HandlerPoster;
 
 /**
  * @author：琚涛
@@ -15,7 +27,19 @@ import java.util.Map;
  */
 public class OccamBus {
 
+    private final HandlerPoster mainThreadPoster;
+    private final BackgroundPoster backgroundPoster;
+    private final AsyncPoster asyncPoster;
+    private final ExecutorService executorService;
+
     private OccamBus() {
+        mainThreadPoster = new HandlerPoster(Looper.getMainLooper(), 10, this);
+        backgroundPoster = new BackgroundPoster(this);
+        asyncPoster = new AsyncPoster(this);
+        //线程池名称
+        ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("Thread-Of-OccamBus").build();
+        executorService = new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS,
+                new SynchronousQueue<Runnable>(), namedThreadFactory);
     }
 
     public static OccamBus getInstance() {
@@ -66,7 +90,7 @@ public class OccamBus {
                     while (iterator.hasNext()) {
                         Subscription subscription = iterator.next();
                         //对象是同一个 则删除
-                        if (subscription.getSubscriber() == subscriber) {
+                        if (subscription.subscriber == subscriber) {
                             iterator.remove();
                         }
                     }
@@ -93,7 +117,7 @@ public class OccamBus {
 
         //加入注册集合  key:标签 value:对应标签的所有函数
         for (SubscriberMethod subscriberMethod : subscriberMethods) {
-            String label = subscriberMethod.getLabel();
+            String label = subscriberMethod.label;
             if (!labels.contains(label)) {
                 labels.add(label);
             }
@@ -129,12 +153,14 @@ public class OccamBus {
                 if (null != subscribeAnnotation) {
                     //注解上的标签
                     String[] values = subscribeAnnotation.value();
+                    ThreadMode threadMode = subscribeAnnotation.threadMode();
                     //方法的参数类型
                     Class<?>[] parameterTypes = method.getParameterTypes();
                     for (String value : values) {
                         //提前帮他开光，省的私有方法在 post 的时候报错
                         method.setAccessible(true);
-                        SubscriberMethod subscriberMethod = new SubscriberMethod(value, method, parameterTypes);
+                        SubscriberMethod subscriberMethod = new SubscriberMethod(value, method, parameterTypes,
+                                threadMode);
                         subscriberMethods.add(subscriberMethod);
                     }
                 }
@@ -153,13 +179,13 @@ public class OccamBus {
     public void post(String label, Object... params) {
         //获得所有对应的订阅者
         List<Subscription> subscriptions = SUBSCRIBES.get(label);
-        if(subscriptions==null){
+        if (subscriptions == null) {
             return;
         }
         for (Subscription subscription : subscriptions) {
             //组装参数，执行函数
-            SubscriberMethod subscriberMethod = subscription.getSubscriberMethod();
-            Class<?>[] parameterTypes = subscriberMethod.getParameterTypes();
+            SubscriberMethod subscriberMethod = subscription.subscriberMethod;
+            Class<?>[] parameterTypes = subscriberMethod.parameterTypes;
             Object[] realParams = new Object[parameterTypes.length];
             if (null != params) {
                 for (int i = 0; i < parameterTypes.length; i++) {
@@ -170,13 +196,67 @@ public class OccamBus {
                     }
                 }
             }
-            try {
-                subscriberMethod.getMethod().invoke(subscription.getSubscriber(), realParams);
-            } catch (IllegalAccessException e) {
-                e.printStackTrace();
-            } catch (InvocationTargetException e) {
-                e.printStackTrace();
-            }
+            postToSubscription(subscription, realParams, label, Looper.getMainLooper() == Looper.myLooper());
         }
+    }
+
+    /**
+     * 选择线程发送事件
+     *
+     * @param subscription
+     * @param realParams
+     * @param label
+     * @param isMainThread
+     */
+    private void postToSubscription(Subscription subscription, Object[] realParams, String label,
+                                    boolean isMainThread) {
+        PendingPost pendingPost = PendingPost.obtainPendingPost(realParams, subscription, label);
+        switch (subscription.subscriberMethod.threadMode) {
+            case POSTING:
+                invokeSubscriber(pendingPost);
+                break;
+            case MAIN:
+                if (isMainThread) {
+                    invokeSubscriber(pendingPost);
+                } else {
+                    mainThreadPoster.enqueue(pendingPost);
+                }
+                break;
+            case BACKGROUND:
+                if (isMainThread) {
+                    backgroundPoster.enqueue(pendingPost);
+                } else {
+                    invokeSubscriber(pendingPost);
+                }
+                break;
+            case ASYNC:
+                asyncPoster.enqueue(pendingPost);
+                break;
+            default:
+                throw new IllegalStateException("Unknown thread mode: " + subscription.subscriberMethod.threadMode);
+        }
+
+    }
+
+    /**
+     * 最终执行目标方法
+     *
+     * @param pendingPost
+     */
+    public void invokeSubscriber(PendingPost pendingPost) {
+        Object[] realParams = pendingPost.realParams;
+        Subscription subscription = pendingPost.subscription;
+        PendingPost.releasePendingPost(pendingPost);
+        try {
+            subscription.subscriberMethod.method.invoke(subscription.subscriber, realParams);
+        } catch (InvocationTargetException e) {
+            e.printStackTrace();
+        } catch (IllegalAccessException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public ExecutorService getExecutorService() {
+        return executorService;
     }
 }
